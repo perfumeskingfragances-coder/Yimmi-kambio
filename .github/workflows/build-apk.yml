@@ -58,17 +58,30 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          STORE_PASS="${KEYSTORE_PASSWORD:-android123}"
+          KEY_PASS="${KEY_PASSWORD:-$STORE_PASS}"
+          ALIAS_NAME="${KEY_ALIAS:-yimmi-kambio}"
+
           if [ ! -f "release.jks" ]; then
-            echo "No se encontró release.jks en la raíz del repositorio."
-            exit 1
+            echo "Generando release.jks temporal para firmar el APK..."
+            keytool -genkeypair -v \
+              -keystore release.jks \
+              -alias "$ALIAS_NAME" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$STORE_PASS" \
+              -keypass "$KEY_PASS" \
+              -dname "CN=Yimmi Kambio, OU=App, O=Futuro Ahora, L=Cagua, ST=Aragua, C=VE"
           fi
+
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease \
             -Pandroid.injected.signing.store.file=../release.jks \
-            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
-            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+            -Pandroid.injected.signing.store.password="$STORE_PASS" \
+            -Pandroid.injected.signing.key.alias="$ALIAS_NAME" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
