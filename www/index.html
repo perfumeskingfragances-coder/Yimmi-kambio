@@ -323,6 +323,26 @@
             measurementId: "G-NELTYTR97J"
         };
 
+        const memoryStorage = new Map();
+        function storageGet(key) {
+            try {
+                if (typeof localStorage !== 'undefined') {
+                    const val = localStorage.getItem(key);
+                    if (val !== null) return val;
+                }
+            } catch (e) {}
+            return memoryStorage.has(key) ? memoryStorage.get(key) : null;
+        }
+        function storageSet(key, val) {
+            const strVal = String(val);
+            memoryStorage.set(key, strVal);
+            try {
+                if (typeof localStorage !== 'undefined') {
+                    localStorage.setItem(key, strVal);
+                }
+            } catch (e) {}
+        }
+
         const CACHE_TASAS_KEY = 'yimmi_kambio_v2_tasas_cache';
         const CACHE_HISTORIAL_KEY = 'yimmi_kambio_v2_historial_cache';
         const HISTORIAL_SINCRONIZADO_KEY = 'yimmi_kambio_v2_historial_synced_flag';
@@ -417,7 +437,7 @@
 
         const app = initializeApp(firebaseConfig);
         try {
-            if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+            if (typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http')) {
                 getAnalytics(app);
             }
         } catch (e) {}
@@ -433,7 +453,7 @@
                 set(ref(db, 'suscriptoresNotificaciones/' + safeKey), {
                     token,
                     actualizadoEn: new Date().toISOString(),
-                    plataforma: /Android/i.test(navigator.userAgent) ? 'android-web' : 'web'
+                    plataforma: /Android/i.test(navigator.userAgent || '') ? 'android-web' : 'web'
                 })
                 .then(() => {
                     window.showToast?.('Token guardado en Firebase', 'success');
@@ -446,19 +466,20 @@
             }
         }
 
-        function mostrarNotificacionDelSistema(titulo, cuerpo) {
+        async function mostrarNotificacionDelSistema(titulo, cuerpo) {
             try {
                 if (!window.state?.notificacionesActivas) return;
                 if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-                    if ('serviceWorker' in navigator && navigator.serviceWorker.ready) {
-                        navigator.serviceWorker.ready.then(reg => {
-                            reg.showNotification(titulo, {
+                    if ('serviceWorker' in navigator) {
+                        const reg = await navigator.serviceWorker.ready;
+                        if (reg && typeof reg.showNotification === 'function') {
+                            await reg.showNotification(titulo, {
                                 body: cuerpo,
                                 icon: LOGO_OFICIAL_URL,
                                 badge: LOGO_OFICIAL_URL,
                                 tag: 'yimmi-kambio-alerta'
-                            }).catch(() => {});
-                        }).catch(() => {});
+                            });
+                        }
                     }
                 }
             } catch (e) {}
@@ -466,14 +487,12 @@
 
         let messagingInstance = null;
         try {
-            if (typeof window !== 'undefined' && window.location.protocol.startsWith('http') && 'Notification' in window && 'serviceWorker' in navigator) {
+            if (typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http') && 'Notification' in window && 'serviceWorker' in navigator) {
                 messagingInstance = getMessaging(app);
                 onMessage(messagingInstance, (payload) => {
-                    const titulo = payload.notification?.title || 'Yimmi Kambio';
-                    const cuerpo = payload.notification?.body || 'Nueva actualización de tasas';
-                    if (typeof window.showToast === 'function') {
-                        window.showToast(`${titulo}: ${cuerpo}`, 'success');
-                    }
+                    const titulo = payload?.notification?.title || 'Yimmi Kambio';
+                    const cuerpo = payload?.notification?.body || 'Nueva actualización de tasas';
+                    window.showToast?.(`${titulo}: ${cuerpo}`, 'success');
                     mostrarNotificacionDelSistema(titulo, cuerpo);
                 });
             }
@@ -670,7 +689,7 @@
 
         function loadTasaPersonalizada() {
             try {
-                const raw = localStorage.getItem(TASA_PERS_KEY);
+                const raw = storageGet(TASA_PERS_KEY);
                 if (raw) {
                     const parsed = JSON.parse(raw);
                     const val = parseFloat(parsed?.valor);
@@ -691,11 +710,11 @@
                 nombre: (nombre || 'Tasa Pers.').trim() || 'Tasa Pers.',
                 valor: (!isNaN(num) && num > 0) ? num : 950.00
             };
-            window.state.tasaPersNombre = limpio.nombre;
-            window.state.tasaPersonalizada = limpio.valor;
-            try {
-                localStorage.setItem(TASA_PERS_KEY, JSON.stringify(limpio));
-            } catch (e) {}
+            if (window.state) {
+                window.state.tasaPersNombre = limpio.nombre;
+                window.state.tasaPersonalizada = limpio.valor;
+            }
+            storageSet(TASA_PERS_KEY, JSON.stringify(limpio));
         }
 
         function getMonedasMeta() {
@@ -711,7 +730,7 @@
 
         function loadCuentasPM() {
             try {
-                const raw = localStorage.getItem('yimmi_kambio_cuentas_pm') || localStorage.getItem('kambio_yimmi_cuentas_pm');
+                const raw = storageGet('yimmi_kambio_cuentas_pm') || storageGet('kambio_yimmi_cuentas_pm');
                 if (raw) {
                     const parsed = JSON.parse(raw);
                     if (Array.isArray(parsed)) return parsed;
@@ -722,7 +741,7 @@
 
         function loadGuardados() {
             try {
-                const raw = localStorage.getItem('yimmi_kambio_guardados') || localStorage.getItem('kambio_yimmi_guardados');
+                const raw = storageGet('yimmi_kambio_guardados') || storageGet('kambio_yimmi_guardados');
                 if (raw) {
                     const parsed = JSON.parse(raw);
                     if (Array.isArray(parsed)) return parsed;
@@ -733,7 +752,7 @@
 
         function loadCachedRates() {
             try {
-                const raw = localStorage.getItem(CACHE_TASAS_KEY);
+                const raw = storageGet(CACHE_TASAS_KEY);
                 if (!raw) return null;
                 const parsed = JSON.parse(raw);
                 if (!parsed || typeof parsed !== 'object') return null;
@@ -759,28 +778,24 @@
                         minute: '2-digit'
                     })
                 };
-                localStorage.setItem(CACHE_TASAS_KEY, JSON.stringify(payload));
-                window.state.ultimaActualizacion = payload.actualizadoEn;
+                storageSet(CACHE_TASAS_KEY, JSON.stringify(payload));
+                if (window.state) {
+                    window.state.ultimaActualizacion = payload.actualizadoEn;
+                }
             } catch (e) {}
         }
 
         function fueHistorialSincronizadoAlgunaVez() {
-            try {
-                return localStorage.getItem(HISTORIAL_SINCRONIZADO_KEY) === '1';
-            } catch (e) {
-                return false;
-            }
+            return storageGet(HISTORIAL_SINCRONIZADO_KEY) === '1';
         }
 
         function marcarHistorialSincronizado() {
-            try {
-                localStorage.setItem(HISTORIAL_SINCRONIZADO_KEY, '1');
-            } catch (e) {}
+            storageSet(HISTORIAL_SINCRONIZADO_KEY, '1');
         }
 
         function loadCachedHistorial() {
             try {
-                const raw = localStorage.getItem(CACHE_HISTORIAL_KEY);
+                const raw = storageGet(CACHE_HISTORIAL_KEY);
                 if (raw) {
                     const parsed = JSON.parse(raw);
                     return {
@@ -798,7 +813,7 @@
 
         function saveCachedHistorial(histObj) {
             try {
-                localStorage.setItem(CACHE_HISTORIAL_KEY, JSON.stringify(histObj));
+                storageSet(CACHE_HISTORIAL_KEY, JSON.stringify(histObj));
             } catch (e) {}
         }
 
@@ -865,7 +880,7 @@
                 }
             }
 
-            let textoSinTel = telefono ? limpio.replace(telMatch[0], ' ') : limpio;
+            let textoSinTel = telefono && telMatch ? limpio.replace(telMatch[0], ' ') : limpio;
             if (ciConLetraMatch) {
                 textoSinTel = textoSinTel.replace(ciConLetraMatch[0], ' ');
             }
@@ -894,7 +909,7 @@
                     montoConsumidoStr = montoConEtiqueta[1];
                     const esBs = /\b(bs\.?|ves)\b/i.test(montoConEtiqueta[0]);
                     if (esBs) {
-                        const tasaRef = getTasaPorMoneda(window.state.pmMoneda || 'usd') || 1;
+                        const tasaRef = getTasaPorMoneda(window.state?.pmMoneda || 'usd') || 1;
                         montoDivisa = formatMontoInput(num / tasaRef);
                     } else {
                         montoDivisa = formatMontoInput(num);
@@ -936,8 +951,7 @@
         }
 
         function sanitizeDecimalText(rawVal) {
-            const s = String(rawVal ?? '').replace(/[^0-9.,]/g, '');
-            return s;
+            return String(rawVal ?? '').replace(/[^0-9.,]/g, '');
         }
 
         function formatMontoInput(numVal) {
@@ -987,7 +1001,7 @@
                 const idxUsd = lower.search(/(\$|usd|dolares|dólares|dolar|dólar)\b/i);
                 monedaDetectada = idxBs < idxUsd ? 'bs' : 'usd';
             } else {
-                monedaDetectada = window.state.filasInvertidas ? 'bs' : 'usd';
+                monedaDetectada = window.state?.filasInvertidas ? 'bs' : 'usd';
             }
 
             return { monto: montoNum, monedaDetectada };
@@ -1043,8 +1057,8 @@
             historialSincronizado: fueHistorialSincronizadoAlgunaVez(),
             themeId: 'neon-purpura',
             mostrarSelectorTemas: false,
-            notificacionesActivas: localStorage.getItem(NOTIF_ACTIVA_KEY) === '1',
-            fcmToken: localStorage.getItem(FCM_TOKEN_KEY) || '',
+            notificacionesActivas: storageGet(NOTIF_ACTIVA_KEY) === '1',
+            fcmToken: storageGet(FCM_TOKEN_KEY) || '',
             activandoNotificaciones: false
         };
 
@@ -1078,10 +1092,10 @@
 
         function getListaHistorialMoneda(monedaId) {
             const baseList = HISTORIAL_BASE_CAPTURAS[monedaId] || HISTORIAL_BASE_CAPTURAS.usd;
-            const remotaList = Array.isArray(window.state.historialFirebase?.[monedaId])
+            const remotaList = Array.isArray(window.state?.historialFirebase?.[monedaId])
                 ? window.state.historialFirebase[monedaId]
                 : [];
-            const combinada = window.state.historialSincronizado
+            const combinada = window.state?.historialSincronizado
                 ? [...baseList, ...remotaList]
                 : (remotaList.length > 0 ? remotaList : baseList);
             return normalizarListaRegistros(combinada, monedaId);
@@ -1131,11 +1145,12 @@
         }
 
         function getTasaActiva() {
+            const s = window.state || {};
             const monedas = getMonedasMeta();
-            const meta = monedas[window.state.monedaActiva] || monedas.usd;
-            const tasaViva = parseFloat(window.state[meta.tasaKey]) || 1;
-            if (window.state.monedaActiva !== 'custom' && window.state.fechaElegidaManualmente && window.state.fechaSeleccionada) {
-                const regFecha = buscarRegistroPorFecha(window.state.monedaActiva, window.state.fechaSeleccionada);
+            const meta = monedas[s.monedaActiva] || monedas.usd;
+            const tasaViva = parseFloat(s[meta.tasaKey]) || 1;
+            if (s.monedaActiva !== 'custom' && s.fechaElegidaManualmente && s.fechaSeleccionada) {
+                const regFecha = buscarRegistroPorFecha(s.monedaActiva, s.fechaSeleccionada);
                 if (regFecha && !isNaN(parseFloat(regFecha.valor))) {
                     return parseFloat(regFecha.valor);
                 }
@@ -1144,19 +1159,23 @@
         }
 
         function getTasaPorMoneda(monedaId) {
+            const s = window.state || {};
             const monedas = getMonedasMeta();
             const meta = monedas[monedaId] || monedas.usd;
-            return parseFloat(window.state[meta.tasaKey]) || 1;
+            return parseFloat(s[meta.tasaKey]) || 1;
         }
 
         function sincronizarCobroVueltoConCalc(forzar = false) {
-            if (!window.state.cobroVueltoPersonalizado || forzar) {
-                window.state.montoCobroVuelto = window.state.montoExt || '0,00';
+            const s = window.state;
+            if (!s) return;
+            if (!s.cobroVueltoPersonalizado || forzar) {
+                s.montoCobroVuelto = s.montoExt || '0,00';
             }
         }
 
         function recalcularDesdeEstadoActual() {
             const s = window.state;
+            if (!s) return;
             const tasa = getTasaActiva();
             if (s.filasInvertidas) {
                 const numBs = parseDecimalInput(s.montoBs);
@@ -1378,10 +1397,8 @@
                     ...principal,
                     todos: textoCambio
                 };
-                if (notificarCambio && typeof window.showToast === 'function') {
-                    window.showToast(`Nueva tasa: ${principal.resumen}`, 'success');
-                }
                 if (notificarCambio) {
+                    window.showToast?.(`Nueva tasa: ${principal.resumen}`, 'success');
                     mostrarNotificacionDelSistema('Yimmi Kambio · Nueva tasa', textoCambio);
                 }
             }
@@ -1414,7 +1431,7 @@
         }
 
         function renderAvisoCambioTasa() {
-            const aviso = window.state.avisoCambioTasa;
+            const aviso = window.state?.avisoCambioTasa;
             if (!aviso) return '';
 
             return `
@@ -1434,7 +1451,7 @@
         }
 
         function renderOfflineBanner() {
-            const s = window.state;
+            const s = window.state || {};
             if (!s.sinConexion) return '';
             const fechaRef = s.ultimaActualizacion ? `Última tasa guardada: ${s.ultimaActualizacion}` : 'Usando última tasa local disponible';
             return `
@@ -1449,20 +1466,24 @@
         }
 
         function stopScannerStream() {
-            window.state.scannerActivo = false;
+            if (window.state) {
+                window.state.scannerActivo = false;
+            }
             ocrBusy = false;
             if (scannerTimerId) {
                 clearTimeout(scannerTimerId);
                 scannerTimerId = null;
             }
             if (scannerStream) {
-                scannerStream.getTracks().forEach(t => t.stop());
+                try {
+                    scannerStream.getTracks().forEach(t => t.stop());
+                } catch (e) {}
                 scannerStream = null;
             }
         }
 
         function aplicarMontoEscaneado(parsed) {
-            if (!parsed) return;
+            if (!parsed || !window.state) return;
             stopScannerStream();
             if (parsed.monedaDetectada === 'usd') {
                 if (window.state.monedaActiva === 'custom') {
@@ -1473,20 +1494,20 @@
                 window.state.montoBs = formatMontoInput(parsed.monto * tasaActual);
                 sincronizarCobroVueltoConCalc();
                 window.render();
-                window.showToast(`Leído: $ ${formatMontoInput(parsed.monto)} convertido a Bs.`, 'success');
+                window.showToast?.(`Leído: $ ${formatMontoInput(parsed.monto)} convertido a Bs.`, 'success');
             } else {
                 const tasaActual = getTasaActiva();
                 window.state.montoBs = formatMontoInput(parsed.monto);
                 window.state.montoExt = formatMontoInput(parsed.monto / tasaActual);
                 sincronizarCobroVueltoConCalc();
                 window.render();
-                window.showToast(`Leído: Bs. ${formatBsComa(parsed.monto)} convertido`, 'success');
+                window.showToast?.(`Leído: Bs. ${formatBsComa(parsed.monto)} convertido`, 'success');
             }
         }
 
         function iniciarCicloOCR() {
             const ejecutarLectura = async () => {
-                if (!window.state.scannerActivo) return;
+                if (!window.state?.scannerActivo) return;
                 const video = document.getElementById('scannerVideo');
                 const canvas = document.getElementById('scannerCanvas');
 
@@ -1503,26 +1524,28 @@
                         canvas.width = cropW;
                         canvas.height = cropH;
                         const ctx = canvas.getContext('2d', { willReadFrequently: true });
-                        ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
+                        if (ctx) {
+                            ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
 
-                        const imgData = ctx.getImageData(0, 0, cropW, cropH);
-                        const data = imgData.data;
-                        for (let i = 0; i < data.length; i += 4) {
-                            const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-                            const v = lum > 135 ? 255 : 0;
-                            data[i] = v;
-                            data[i + 1] = v;
-                            data[i + 2] = v;
-                        }
-                        ctx.putImageData(imgData, 0, 0);
+                            const imgData = ctx.getImageData(0, 0, cropW, cropH);
+                            const data = imgData.data;
+                            for (let i = 0; i < data.length; i += 4) {
+                                const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                                const v = lum > 135 ? 255 : 0;
+                                data[i] = v;
+                                data[i + 1] = v;
+                                data[i + 2] = v;
+                            }
+                            ctx.putImageData(imgData, 0, 0);
 
-                        const res = await Tesseract.recognize(canvas, 'eng');
-                        const textoLeido = (res?.data?.text || '').trim();
-                        if (textoLeido) {
-                            const parsed = interpretarMontoOCR(textoLeido, window.state.scannerModo);
-                            if (parsed && window.state.scannerActivo) {
-                                aplicarMontoEscaneado(parsed);
-                                return;
+                            const res = await Tesseract.recognize(canvas, 'eng');
+                            const textoLeido = (res?.data?.text || '').trim();
+                            if (textoLeido) {
+                                const parsed = interpretarMontoOCR(textoLeido, window.state.scannerModo);
+                                if (parsed && window.state.scannerActivo) {
+                                    aplicarMontoEscaneado(parsed);
+                                    return;
+                                }
                             }
                         }
                     } catch (e) {}
@@ -1531,7 +1554,7 @@
                     }
                 }
 
-                if (window.state.scannerActivo) {
+                if (window.state?.scannerActivo) {
                     scannerTimerId = setTimeout(ejecutarLectura, 950);
                 }
             };
@@ -1542,37 +1565,39 @@
         function renderRatesChart() {
             const ctx = document.getElementById('ratesChartCanvas');
             if (!ctx || typeof Chart === 'undefined') return;
-            if (chartInstance) {
-                chartInstance.destroy();
-                chartInstance = null;
-            }
-            const s = window.state;
-            const t = THEMES[s.themeId] || THEMES['neon-purpura'];
-            chartInstance = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: ['BCV', 'Euro', 'USDT', s.tasaPersNombre || 'Pers.'],
-                    datasets: [{
-                        label: 'Bs.',
-                        data: [s.tasaBcv, s.tasaEuroBcv, s.tasaUsdt, s.tasaPersonalizada],
-                        backgroundColor: [t.secondary, t.primary, '#6366f1', '#0ea5e9'],
-                        borderRadius: 8
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { ticks: { color: '#64748b', font: { size: 10, weight: 'bold' } }, grid: { display: false } },
-                        y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(148,163,184,0.16)' } }
-                    }
+            try {
+                if (chartInstance) {
+                    chartInstance.destroy();
+                    chartInstance = null;
                 }
-            });
+                const s = window.state;
+                const t = THEMES[s.themeId] || THEMES['neon-purpura'];
+                chartInstance = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['BCV', 'Euro', 'USDT', s.tasaPersNombre || 'Pers.'],
+                        datasets: [{
+                            label: 'Bs.',
+                            data: [s.tasaBcv, s.tasaEuroBcv, s.tasaUsdt, s.tasaPersonalizada],
+                            backgroundColor: [t.secondary, t.primary, '#6366f1', '#0ea5e9'],
+                            borderRadius: 8
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { ticks: { color: '#64748b', font: { size: 10, weight: 'bold' } }, grid: { display: false } },
+                            y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(148,163,184,0.16)' } }
+                        }
+                    }
+                });
+            } catch (e) {}
         }
 
         function calcularVariacionesSobreLista(listaAsc) {
-            const desc = [...listaAsc].reverse().map((p, idx, arr) => {
+            return [...listaAsc].reverse().map((p, idx, arr) => {
                 const anterior = arr[idx + 1] ? arr[idx + 1].valor : p.valor;
                 const diff = p.valor - anterior;
                 const pct = anterior > 0 ? ((diff / anterior) * 100) : 0;
@@ -1586,7 +1611,6 @@
                     subVar: `(${signoDiff}${formatBsComa(diff)} Bs)`
                 };
             });
-            return desc;
         }
 
         function buildHistorySerie(monedaId, rango) {
@@ -1600,7 +1624,7 @@
 
             const filtradosReales = realesMoneda.filter(p => (p.ts === 0 ? true : p.ts >= limiteMs));
             const serieAsc = filtradosReales.length > 0 ? filtradosReales : realesMoneda;
-            const esDatoReal = window.state.historialSincronizado || serieAsc.length > 0;
+            const esDatoReal = Boolean(window.state?.historialSincronizado) || serieAsc.length > 0;
 
             const registrosDesc = calcularVariacionesSobreLista(realesMoneda);
             const registrosRangoDesc = calcularVariacionesSobreLista(serieAsc);
@@ -1629,55 +1653,53 @@
         function renderHistoryChart() {
             const ctx = document.getElementById('historyEvolutionCanvas');
             if (!ctx || typeof Chart === 'undefined') return;
-            if (historyChartInstance) {
-                historyChartInstance.destroy();
-                historyChartInstance = null;
-            }
-            const t = THEMES[window.state.themeId] || THEMES['neon-purpura'];
-            const isDark = document.documentElement.classList.contains('dark');
-            const datos = buildHistorySerie(window.state.historialMoneda, window.state.historialRango);
-            const bgColors = datos.serieAsc.map((_, idx, arr) =>
-                idx === arr.length - 1 ? t.primary : (isDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(15, 23, 42, 0.14)')
-            );
+            try {
+                if (historyChartInstance) {
+                    historyChartInstance.destroy();
+                    historyChartInstance = null;
+                }
+                const t = THEMES[window.state.themeId] || THEMES['neon-purpura'];
+                const isDark = document.documentElement.classList.contains('dark');
+                const datos = buildHistorySerie(window.state.historialMoneda, window.state.historialRango);
+                const bgColors = datos.serieAsc.map((_, idx, arr) =>
+                    idx === arr.length - 1 ? t.primary : (isDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(15, 23, 42, 0.14)')
+                );
 
-            historyChartInstance = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: datos.serieAsc.map(x => x.labelFecha),
-                    datasets: [{
-                        label: 'Bs.',
-                        data: datos.serieAsc.map(x => x.valor),
-                        backgroundColor: bgColors,
-                        borderRadius: 6
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: {
-                            ticks: { color: '#64748b', font: { size: 9, weight: 'bold' }, maxTicksLimit: 5 },
-                            grid: { display: false }
-                        },
-                        y: {
-                            display: false
+                historyChartInstance = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: datos.serieAsc.map(x => x.labelFecha),
+                        datasets: [{
+                            label: 'Bs.',
+                            data: datos.serieAsc.map(x => x.valor),
+                            backgroundColor: bgColors,
+                            borderRadius: 6
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: {
+                                ticks: { color: '#64748b', font: { size: 9, weight: 'bold' }, maxTicksLimit: 5 },
+                                grid: { display: false }
+                            },
+                            y: {
+                                display: false
+                            }
                         }
                     }
-                }
-            });
+                });
+            } catch (e) {}
         }
 
         function persistGuardados() {
-            try {
-                localStorage.setItem('yimmi_kambio_guardados', JSON.stringify(window.state.guardados));
-            } catch (e) {}
+            storageSet('yimmi_kambio_guardados', JSON.stringify(window.state.guardados));
         }
 
         function persistCuentasPM() {
-            try {
-                localStorage.setItem('yimmi_kambio_cuentas_pm', JSON.stringify(window.state.cuentasPM));
-            } catch (e) {}
+            storageSet('yimmi_kambio_cuentas_pm', JSON.stringify(window.state.cuentasPM));
         }
 
         function getPagoMovilResumenTexto() {
@@ -1790,7 +1812,7 @@
                 <div class="${s.filasInvertidas ? 'result-highlight-box' : 'field-box'} rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2">
                     <span class="text-xs font-mono font-black accent-text">${meta.simbolo}</span>
                     <input type="text" inputmode="decimal" id="calcExtInput" value="${s.montoExt}" oninput="window.onCambioExt(this.value)" onblur="window.formatearCampoAlSalir('calcExtInput', 'montoExt')" placeholder="0,00" class="flex-1 bg-transparent text-right font-mono text-xl font-extrabold focus:outline-none">
-                    <button type="button" onclick="window.copiarTexto(document.getElementById('calcExtInput').value)" class="text-slate-500 dark:text-slate-300 hover:opacity-80 p-1" title="Copiar">
+                    <button type="button" onclick="window.copiarTexto(document.getElementById('calcExtInput')?.value || '')" class="text-slate-500 dark:text-slate-300 hover:opacity-80 p-1" title="Copiar">
                         <i class="fa-regular fa-copy text-xs"></i>
                     </button>
                 </div>
@@ -1800,7 +1822,7 @@
                 <div class="${!s.filasInvertidas ? 'result-highlight-box' : 'field-box'} rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2">
                     <span class="text-xs font-mono font-black text-blue-700 dark:text-blue-300">Bs</span>
                     <input type="text" inputmode="decimal" id="calcBsInput" value="${s.montoBs}" oninput="window.onCambioBs(this.value)" onblur="window.formatearCampoAlSalir('calcBsInput', 'montoBs')" placeholder="0,00" class="flex-1 bg-transparent text-right font-mono text-xl font-black text-emerald-700 dark:text-emerald-400 focus:outline-none">
-                    <button type="button" onclick="window.copiarTexto(document.getElementById('calcBsInput').value)" class="text-slate-500 dark:text-slate-300 hover:opacity-80 p-1" title="Copiar">
+                    <button type="button" onclick="window.copiarTexto(document.getElementById('calcBsInput')?.value || '')" class="text-slate-500 dark:text-slate-300 hover:opacity-80 p-1" title="Copiar">
                         <i class="fa-regular fa-copy text-xs"></i>
                     </button>
                 </div>
@@ -1902,7 +1924,7 @@
                             <i class="fa-solid fa-layer-group text-blue-700 dark:text-blue-400"></i>
                             <span>Monedas</span>
                         </button>
-                        <button type="button" onclick="document.getElementById('fechaHomePicker')?.showPicker ? document.getElementById('fechaHomePicker').showPicker() : document.getElementById('fechaHomePicker')?.click()" class="glass-panel py-2 px-1 rounded-2xl text-[10px] font-extrabold flex items-center justify-center gap-1">
+                        <button type="button" onclick="window.abrirPickerFecha('fechaHomePicker')" class="glass-panel py-2 px-1 rounded-2xl text-[10px] font-extrabold flex items-center justify-center gap-1">
                             <i class="fa-solid fa-calendar-days accent-text"></i>
                             <span>${fechaCorta}</span>
                         </button>
@@ -2025,7 +2047,7 @@
 
                     <div class="glass-panel rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2">
                         <span class="text-xs font-extrabold font-mono">${fechaCompleta}</span>
-                        <button type="button" onclick="document.getElementById('bcvPanelFechaPicker')?.showPicker ? document.getElementById('bcvPanelFechaPicker').showPicker() : document.getElementById('bcvPanelFechaPicker')?.click()" class="w-8 h-8 rounded-xl field-box flex items-center justify-center text-xs accent-text" title="Cambiar fecha">
+                        <button type="button" onclick="window.abrirPickerFecha('bcvPanelFechaPicker')" class="w-8 h-8 rounded-xl field-box flex items-center justify-center text-xs accent-text" title="Cambiar fecha">
                             <i class="fa-solid fa-calendar-days"></i>
                         </button>
                         <input type="date" id="bcvPanelFechaPicker" value="${s.fechaSeleccionada}" onchange="window.onCambioFecha(this.value)" class="sr-only">
@@ -2475,6 +2497,7 @@
                             const bsFormateado = formatBsComa(bsCalculado);
                             const extFormateado = formatMontoInput(parseFloat(item.monto) || 0);
                             const textoCopia = `${item.titulo}: Bs. ${bsFormateado} (${meta.simbolo} ${extFormateado})`;
+                            const textoEscapado = textoCopia.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
                             return `
                                 <div class="glass-panel rounded-2xl px-3 py-2.5 space-y-1.5">
@@ -2488,7 +2511,7 @@
                                                 <i class="fa-regular fa-copy"></i>
                                                 <span>Copiar</span>
                                             </button>
-                                            <button type="button" onclick="window.compartirTexto('${textoCopia.replace(/'/g, "\\'")}')" class="w-7 h-7 rounded-lg field-box text-slate-700 dark:text-gray-200 flex items-center justify-center" title="Compartir">
+                                            <button type="button" onclick="window.compartirTexto('${textoEscapado}')" class="w-7 h-7 rounded-lg field-box text-slate-700 dark:text-gray-200 flex items-center justify-center" title="Compartir">
                                                 <i class="fa-solid fa-share-nodes text-[10px]"></i>
                                             </button>
                                             <button type="button" onclick="window.eliminarGuardado('${item.id}')" class="w-7 h-7 rounded-lg field-box text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 flex items-center justify-center" title="Eliminar">
@@ -2681,7 +2704,7 @@
 
         function renderMenuHamburguesaDrawer() {
             const s = window.state;
-            if (!s.menuHamburguesaAbierto) return '';
+            if (!s?.menuHamburguesaAbierto) return '';
 
             return `
                 <div class="fixed inset-0 z-50 flex justify-center">
@@ -2859,6 +2882,20 @@
         window.renderGuardadosView = renderGuardadosView;
         window.renderPagoMovilView = renderPagoMovilView;
 
+        window.abrirPickerFecha = function(inputId) {
+            const el = document.getElementById(inputId);
+            if (!el) return;
+            try {
+                if (typeof el.showPicker === 'function') {
+                    el.showPicker();
+                    return;
+                }
+            } catch (e) {}
+            try {
+                el.click();
+            } catch (e) {}
+        };
+
         window.activarNotificacionesPush = async function() {
             if (window.state.activandoNotificaciones) return;
             if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -2872,44 +2909,49 @@
                 const permiso = await Notification.requestPermission();
                 if (permiso !== 'granted') {
                     window.state.notificacionesActivas = false;
-                    localStorage.setItem(NOTIF_ACTIVA_KEY, '0');
+                    storageSet(NOTIF_ACTIVA_KEY, '0');
                     window.showToast?.('Permiso de notificaciones no concedido', 'error');
                     return;
                 }
 
                 window.state.notificacionesActivas = true;
-                localStorage.setItem(NOTIF_ACTIVA_KEY, '1');
+                storageSet(NOTIF_ACTIVA_KEY, '1');
 
-                if ('serviceWorker' in navigator) {
-                    const swReg = await navigator.serviceWorker.register('./firebase-messaging-sw.js').catch((err) => {
-                        window.showToast?.('Error SW: ' + (err?.code || err?.message || 'no registrado'), 'error');
-                        return null;
-                    });
-                    if (messagingInstance && swReg && VAPID_PUBLIC_KEY) {
-                        const token = await getToken(messagingInstance, {
-                            vapidKey: VAPID_PUBLIC_KEY,
-                            serviceWorkerRegistration: swReg
-                        }).catch((err) => {
-                            window.showToast?.('Error getToken: ' + (err?.code || err?.message || 'revisa SW y VAPID'), 'error');
-                            return '';
-                        });
-                        if (token) {
-                            window.state.fcmToken = token;
-                            localStorage.setItem(FCM_TOKEN_KEY, token);
-                            registrarTokenEnFirebase(token);
-                        } else {
-                            window.showToast?.('No se generó el token de notificaciones', 'error');
-                        }
-                    } else if (!messagingInstance) {
-                        window.showToast?.('Messaging no inicializado en este contexto', 'error');
+                if ('serviceWorker' in navigator && window.location && window.location.protocol.startsWith('http')) {
+                    let swReg = null;
+                    try {
+                        swReg = await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+                    } catch (err) {
+                        window.showToast?.('Aviso SW: ' + (err?.code || err?.message || 'no registrado'), 'error');
                     }
-                    if (swReg) {
-                        await swReg.showNotification('Yimmi Kambio', {
-                            body: 'Notificaciones activadas. Te avisaremos cuando cambien las tasas.',
-                            icon: LOGO_OFICIAL_URL,
-                            badge: LOGO_OFICIAL_URL,
-                            tag: 'yimmi-kambio-activada'
-                        }).catch(() => {});
+
+                    if (messagingInstance && swReg && VAPID_PUBLIC_KEY) {
+                        try {
+                            const token = await getToken(messagingInstance, {
+                                vapidKey: VAPID_PUBLIC_KEY,
+                                serviceWorkerRegistration: swReg
+                            });
+                            if (token) {
+                                window.state.fcmToken = token;
+                                storageSet(FCM_TOKEN_KEY, token);
+                                registrarTokenEnFirebase(token);
+                            } else {
+                                window.showToast?.('No se generó el token de notificaciones', 'error');
+                            }
+                        } catch (err) {
+                            window.showToast?.('Aviso FCM: ' + (err?.code || err?.message || 'revisa SW y VAPID'), 'error');
+                        }
+                    }
+
+                    if (swReg && typeof swReg.showNotification === 'function') {
+                        try {
+                            await swReg.showNotification('Yimmi Kambio', {
+                                body: 'Notificaciones activadas. Te avisaremos cuando cambien las tasas.',
+                                icon: LOGO_OFICIAL_URL,
+                                badge: LOGO_OFICIAL_URL,
+                                tag: 'yimmi-kambio-activada'
+                            });
+                        } catch (e) {}
                     }
                 }
                 window.showToast?.('Notificaciones activadas en Yimmi Kambio', 'success');
@@ -2986,7 +3028,7 @@
             }
             window.state.mostrarCajaPegarPM = false;
             window.render();
-            window.showToast('Datos de Pago Móvil aplicados', 'success');
+            window.showToast?.('Datos de Pago Móvil aplicados', 'success');
             return true;
         }
 
@@ -3011,7 +3053,7 @@
             const area = document.getElementById('pmTextoPegarArea');
             const txt = (area?.value || '').trim();
             if (!txt) {
-                window.showToast('Pega primero los datos recibidos', 'error');
+                window.showToast?.('Pega primero los datos recibidos', 'error');
                 return;
             }
             const parsed = parsearDatosPagoMovilPegados(txt);
@@ -3028,7 +3070,7 @@
             window.state.pmDatosPegados = null;
             window.state.mostrarCajaPegarPM = false;
             window.render();
-            window.showToast('Pago Móvil limpiado', 'success');
+            window.showToast?.('Pago Móvil limpiado', 'success');
         };
 
         window.onCambioCobroVuelto = function(val) {
@@ -3096,13 +3138,13 @@
             const nombre = (document.getElementById('tasaPersNombreInput')?.value || '').trim();
             const valNum = parseDecimalInput(document.getElementById('tasaPersValorInput')?.value || '');
             if (isNaN(valNum) || valNum <= 0) {
-                window.showToast('Ingresa un valor válido mayor a 0', 'error');
+                window.showToast?.('Ingresa un valor válido mayor a 0', 'error');
                 return;
             }
             saveTasaPersonalizada(nombre, valNum);
             window.state.mostrarEditorTasaPers = false;
             recalcularDesdeEstadoActual();
-            window.showToast(`${window.state.tasaPersNombre}: ${formatBsComa(valNum)} Bs`, 'success');
+            window.showToast?.(`${window.state.tasaPersNombre}: ${formatBsComa(valNum)} Bs`, 'success');
             window.render();
         };
 
@@ -3142,11 +3184,11 @@
 
                 window.state.sinConexion = typeof navigator !== 'undefined' ? !navigator.onLine : false;
                 if (!huboCambio) {
-                    window.showToast('Tasas al día desde yimmi-kambio-v2', 'success');
+                    window.showToast?.('Tasas al día desde yimmi-kambio-v2', 'success');
                 }
             } catch (e) {
                 window.state.sinConexion = typeof navigator !== 'undefined' ? !navigator.onLine : true;
-                window.showToast('Sin conexión: mostrando última tasa guardada', 'error');
+                window.showToast?.('Sin conexión: mostrando última tasa guardada', 'error');
             } finally {
                 window.state.actualizandoTasas = false;
                 window.render();
@@ -3170,16 +3212,16 @@
         window.seleccionarTema = function(themeId, forzarModo) {
             const t = THEMES[themeId] || THEMES['neon-purpura'];
             window.state.themeId = themeId;
-            localStorage.setItem('yimmi_kambio_color_theme', themeId);
+            storageSet('yimmi_kambio_color_theme', themeId);
             applyThemePalette(themeId);
 
             if (forzarModo === 'dark') {
                 document.documentElement.classList.add('dark');
-                localStorage.setItem('yimmi_kambio_mode', 'dark');
+                storageSet('yimmi_kambio_mode', 'dark');
             } else if (forzarModo === 'light') {
                 document.documentElement.classList.remove('dark');
-                localStorage.setItem('yimmi_kambio_mode', 'light');
-            } else if (!localStorage.getItem('yimmi_kambio_mode')) {
+                storageSet('yimmi_kambio_mode', 'light');
+            } else if (!storageGet('yimmi_kambio_mode')) {
                 if (t.preferDark) {
                     document.documentElement.classList.add('dark');
                 } else {
@@ -3188,7 +3230,7 @@
             }
 
             window.state.mostrarSelectorTemas = false;
-            window.showToast('Tema: ' + t.label, 'success');
+            window.showToast?.('Tema: ' + t.label, 'success');
             window.render();
             if (window.state.view === 'historial') {
                 setTimeout(renderHistoryChart, 60);
@@ -3213,10 +3255,10 @@
             const html = document.documentElement;
             if (html.classList.contains('dark')) {
                 html.classList.remove('dark');
-                localStorage.setItem('yimmi_kambio_mode', 'light');
+                storageSet('yimmi_kambio_mode', 'light');
             } else {
                 html.classList.add('dark');
-                localStorage.setItem('yimmi_kambio_mode', 'dark');
+                storageSet('yimmi_kambio_mode', 'dark');
             }
             window.render();
             if (window.state.view === 'historial') {
@@ -3237,21 +3279,47 @@
             setTimeout(() => toast.classList.remove('translate-x-full'), 50);
             setTimeout(() => {
                 toast.classList.add('translate-x-full');
-                setTimeout(() => toast.remove(), 300);
+                setTimeout(() => {
+                    try { toast.remove(); } catch (e) {}
+                }, 300);
             }, 2600);
         };
 
+        function copiarFallbackTexto(texto) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = texto;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                window.showToast?.('Copiado: ' + texto, 'success');
+            } catch (e) {
+                window.showToast?.('No se pudo copiar', 'error');
+            }
+        }
+
         window.copiarTexto = function(val) {
             if (val === undefined || val === null || val === '') return;
-            navigator.clipboard.writeText(String(val)).then(() => {
-                window.showToast('Copiado: ' + val, 'success');
-            });
+            const texto = String(val);
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                navigator.clipboard.writeText(texto)
+                    .then(() => window.showToast?.('Copiado: ' + texto, 'success'))
+                    .catch(() => copiarFallbackTexto(texto));
+            } else {
+                copiarFallbackTexto(texto);
+            }
         };
 
         window.compartirTexto = function(texto) {
             if (!texto) return;
-            if (navigator.share) {
-                navigator.share({ title: 'Yimmi Kambio', text: texto }).catch(() => {});
+            if (typeof navigator.share === 'function') {
+                navigator.share({ title: 'Yimmi Kambio', text: texto }).catch(() => {
+                    window.copiarTexto(texto);
+                });
             } else {
                 window.copiarTexto(texto);
             }
@@ -3354,7 +3422,7 @@
             s.filasInvertidas = !s.filasInvertidas;
             recalcularDesdeEstadoActual();
             window.render();
-            window.showToast(s.filasInvertidas ? 'Bs. arriba y divisa abajo' : 'Divisa arriba y Bs. abajo', 'success');
+            window.showToast?.(s.filasInvertidas ? 'Bs. arriba y divisa abajo' : 'Divisa arriba y Bs. abajo', 'success');
         };
 
         window.seleccionarMoneda = function(monedaId, irACalculadora = true) {
@@ -3377,7 +3445,7 @@
             window.render();
             const reg = buscarRegistroPorFecha(window.state.monedaActiva, fechaStr);
             if (reg) {
-                window.showToast(`Tasa ${formatearFechaLegible(fechaStr)}: ${formatBsComa(reg.valor)} Bs.`, 'success');
+                window.showToast?.(`Tasa ${formatearFechaLegible(fechaStr)}: ${formatBsComa(reg.valor)} Bs.`, 'success');
             }
         };
 
@@ -3393,8 +3461,8 @@
                 window.render();
                 return;
             }
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                window.showToast('Cámara no disponible en este dispositivo', 'error');
+            if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+                window.showToast?.('Cámara no disponible en este dispositivo', 'error');
                 return;
             }
             try {
@@ -3405,7 +3473,7 @@
 
                 setTimeout(() => {
                     const video = document.getElementById('scannerVideo');
-                    if (video) {
+                    if (video && scannerStream) {
                         video.srcObject = scannerStream;
                         video.setAttribute('playsinline', '');
                         video.setAttribute('muted', '');
@@ -3415,7 +3483,8 @@
                     iniciarCicloOCR();
                 }, 80);
             } catch (err) {
-                window.showToast('No se pudo activar la cámara', 'error');
+                stopScannerStream();
+                window.showToast?.('No se pudo activar la cámara', 'error');
             }
         };
 
@@ -3459,7 +3528,7 @@
             const moneda = document.getElementById('guardadoMoneda')?.value || 'usd';
             const monto = parseDecimalInput(document.getElementById('guardadoMonto')?.value || '0');
             if (!titulo || isNaN(monto) || monto <= 0) {
-                window.showToast('Ingresa un nombre y un monto válido', 'error');
+                window.showToast?.('Ingresa un nombre y un monto válido', 'error');
                 return;
             }
             window.state.guardados.unshift({
@@ -3471,14 +3540,14 @@
             });
             persistGuardados();
             window.state.mostrarFormGuardado = false;
-            window.showToast('Cálculo guardado', 'success');
+            window.showToast?.('Cálculo guardado', 'success');
             window.render();
         };
 
         window.eliminarGuardado = function(id) {
             window.state.guardados = window.state.guardados.filter(item => item.id !== id);
             persistGuardados();
-            window.showToast('Eliminado de guardados', 'success');
+            window.showToast?.('Eliminado de guardados', 'success');
             window.render();
         };
 
@@ -3506,7 +3575,7 @@
             const documento = (document.getElementById('pmDocumentoInput')?.value || '').trim().toUpperCase();
             const telefono = (document.getElementById('pmTelefonoInput')?.value || '').trim();
             if (!banco || !documento || !telefono) {
-                window.showToast('Selecciona el banco y completa documento y teléfono', 'error');
+                window.showToast?.('Selecciona el banco y completa documento y teléfono', 'error');
                 return;
             }
 
@@ -3514,12 +3583,12 @@
                 window.state.cuentasPM = window.state.cuentasPM.map(c =>
                     c.id === window.state.editandoCuentaId ? { ...c, banco, documento, telefono } : c
                 );
-                window.showToast('Cuenta de Pago Móvil actualizada', 'success');
+                window.showToast?.('Cuenta de Pago Móvil actualizada', 'success');
             } else {
                 const nueva = { id: 'pm_' + Date.now(), banco, documento, telefono };
                 window.state.cuentasPM.push(nueva);
                 window.state.cuentaActivaId = nueva.id;
-                window.showToast('Cuenta de Pago Móvil añadida', 'success');
+                window.showToast?.('Cuenta de Pago Móvil añadida', 'success');
             }
 
             persistCuentasPM();
@@ -3560,7 +3629,7 @@
             const cuenta = s.cuentasPM.find(c => c.id === s.cuentaActivaId) || s.cuentasPM[0] || null;
             const tieneAlgo = Boolean(s.pmDatosPegados && (s.pmDatosPegados.banco || s.pmDatosPegados.documento || s.pmDatosPegados.telefono)) || Boolean(cuenta);
             if (!tieneAlgo) {
-                window.showToast(texto, 'error');
+                window.showToast?.(texto, 'error');
                 return;
             }
             window.compartirTexto(texto);
@@ -3568,50 +3637,54 @@
 
         window.render = function() {
             const appDiv = document.getElementById('app');
-            if (!appDiv) return;
-            const v = window.state.view || 'calculadora';
+            if (!appDiv || !window.state) return;
+            try {
+                const v = window.state.view || 'calculadora';
 
-            let bodyHtml = '';
-            if (v === 'monedas') bodyHtml = window.renderMonedasView();
-            else if (v === 'tasas') bodyHtml = window.renderTasasView();
-            else if (v === 'tasasBcvPanel') bodyHtml = window.renderTasasBcvPanelView();
-            else if (v === 'tasasUsdtPanel') bodyHtml = window.renderTasasUsdtPanelView();
-            else if (v === 'guardados') bodyHtml = window.renderGuardadosView();
-            else if (v === 'pagoMovil') bodyHtml = window.renderPagoMovilView();
-            else if (v === 'historial') bodyHtml = window.renderHistorialView();
-            else bodyHtml = window.renderCalculadoraView();
+                let bodyHtml = '';
+                if (v === 'monedas') bodyHtml = window.renderMonedasView();
+                else if (v === 'tasas') bodyHtml = window.renderTasasView();
+                else if (v === 'tasasBcvPanel') bodyHtml = window.renderTasasBcvPanelView();
+                else if (v === 'tasasUsdtPanel') bodyHtml = window.renderTasasUsdtPanelView();
+                else if (v === 'guardados') bodyHtml = window.renderGuardadosView();
+                else if (v === 'pagoMovil') bodyHtml = window.renderPagoMovilView();
+                else if (v === 'historial') bodyHtml = window.renderHistorialView();
+                else bodyHtml = window.renderCalculadoraView();
 
-            appDiv.innerHTML = renderTopBar() + renderOfflineBanner() + bodyHtml + renderBottomNav(v) + renderMenuHamburguesaDrawer();
+                appDiv.innerHTML = renderTopBar() + renderOfflineBanner() + bodyHtml + renderBottomNav(v) + renderMenuHamburguesaDrawer();
+            } catch (e) {}
         };
 
         function initFirebaseListeners() {
-            onValue(ref(db, 'config'), (snapshot) => {
-                const val = snapshot.val();
-                if (val && aplicarConfigSnapshot(val, true)) {
-                    window.render();
-                    if (window.state.view === 'tasas' && window.state.mostrarGrafica) {
-                        setTimeout(renderRatesChart, 60);
+            try {
+                onValue(ref(db, 'config'), (snapshot) => {
+                    const val = snapshot.val();
+                    if (val && aplicarConfigSnapshot(val, true)) {
+                        window.render();
+                        if (window.state.view === 'tasas' && window.state.mostrarGrafica) {
+                            setTimeout(renderRatesChart, 60);
+                        }
+                        if (window.state.view === 'historial') {
+                            setTimeout(renderHistoryChart, 60);
+                        }
                     }
+                }, () => {});
+
+                onValue(ref(db, 'historialTasas'), (snapshot) => {
+                    const rawHist = snapshot.exists() ? snapshot.val() : {};
+                    const extraido = extraerHistorialDesdeSnapshot(rawHist);
+
+                    window.state.historialFirebase = extraido;
+                    window.state.historialSincronizado = true;
+                    marcarHistorialSincronizado();
+                    saveCachedHistorial(extraido);
+                    recalcularDesdeEstadoActual();
+                    window.render();
                     if (window.state.view === 'historial') {
                         setTimeout(renderHistoryChart, 60);
                     }
-                }
-            });
-
-            onValue(ref(db, 'historialTasas'), (snapshot) => {
-                const rawHist = snapshot.exists() ? snapshot.val() : {};
-                const extraido = extraerHistorialDesdeSnapshot(rawHist);
-
-                window.state.historialFirebase = extraido;
-                window.state.historialSincronizado = true;
-                marcarHistorialSincronizado();
-                saveCachedHistorial(extraido);
-                recalcularDesdeEstadoActual();
-                window.render();
-                if (window.state.view === 'historial') {
-                    setTimeout(renderHistoryChart, 60);
-                }
-            });
+                }, () => {});
+            } catch (e) {}
         }
 
         function ocultarSplashTras3Segundos() {
@@ -3620,28 +3693,32 @@
             setTimeout(() => {
                 splash.classList.add('splash-hide');
                 setTimeout(() => {
-                    splash.remove();
+                    try { splash.remove(); } catch (e) {}
                 }, 360);
             }, 2650);
         }
 
         window.addEventListener('online', () => {
             window.state.sinConexion = false;
-            window.showToast('Conexión restablecida', 'success');
+            window.showToast?.('Conexión restablecida', 'success');
             window.render();
             if (window.state.view === 'historial') setTimeout(renderHistoryChart, 60);
         });
 
         window.addEventListener('offline', () => {
             window.state.sinConexion = true;
-            window.showToast('Sin conexión: usando última tasa guardada', 'error');
+            window.showToast?.('Sin conexión: usando última tasa guardada', 'error');
             window.render();
             if (window.state.view === 'historial') setTimeout(renderHistoryChart, 60);
         });
 
-        window.addEventListener('DOMContentLoaded', () => {
-            const savedThemeId = localStorage.getItem('yimmi_kambio_color_theme') || localStorage.getItem('kambio_yimmi_color_theme') || 'neon-purpura';
-            const savedMode = localStorage.getItem('yimmi_kambio_mode') || localStorage.getItem('kambio_yimmi_mode');
+        window.addEventListener('beforeunload', () => {
+            stopScannerStream();
+        });
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            const savedThemeId = storageGet('yimmi_kambio_color_theme') || storageGet('kambio_yimmi_color_theme') || 'neon-purpura';
+            const savedMode = storageGet('yimmi_kambio_mode') || storageGet('kambio_yimmi_mode');
             window.state.themeId = savedThemeId;
             applyThemePalette(savedThemeId);
 
@@ -3651,23 +3728,6 @@
                 document.documentElement.classList.remove('dark');
             }
 
-            if (window.state.notificacionesActivas && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
-                navigator.serviceWorker.register('./firebase-messaging-sw.js').then(swReg => {
-                    if (messagingInstance && VAPID_PUBLIC_KEY) {
-                        getToken(messagingInstance, {
-                            vapidKey: VAPID_PUBLIC_KEY,
-                            serviceWorkerRegistration: swReg
-                        }).then(token => {
-                            if (token) {
-                                window.state.fcmToken = token;
-                                localStorage.setItem(FCM_TOKEN_KEY, token);
-                                registrarTokenEnFirebase(token);
-                            }
-                        }).catch(() => {});
-                    }
-                }).catch(() => {});
-            }
-
             recalcularDesdeEstadoActual();
             initFirebaseListeners();
             window.render();
@@ -3675,7 +3735,24 @@
                 setTimeout(renderHistoryChart, 80);
             }
             ocultarSplashTras3Segundos();
+
+            if (window.state.notificacionesActivas && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator && window.location && window.location.protocol.startsWith('http')) {
+                try {
+                    const swReg = await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+                    if (messagingInstance && swReg && VAPID_PUBLIC_KEY) {
+                        const token = await getToken(messagingInstance, {
+                            vapidKey: VAPID_PUBLIC_KEY,
+                            serviceWorkerRegistration: swReg
+                        });
+                        if (token) {
+                            window.state.fcmToken = token;
+                            storageSet(FCM_TOKEN_KEY, token);
+                            registrarTokenEnFirebase(token);
+                        }
+                    }
+                } catch (e) {}
+            }
         });
     </script>
 </body>
-  </html>
+</html>
