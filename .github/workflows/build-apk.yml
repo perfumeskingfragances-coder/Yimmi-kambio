@@ -18,7 +18,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -30,7 +29,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci || npm install
 
       - name: Ensure Android platform exists and sync Capacitor
         run: |
@@ -45,6 +44,10 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          if [ ! -f "release.jks" ]; then
+            echo "No se encontró release.jks en la raíz del repositorio."
+            exit 1
+          fi
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease \
