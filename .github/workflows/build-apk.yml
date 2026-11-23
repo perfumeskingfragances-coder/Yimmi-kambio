@@ -63,7 +63,7 @@ jobs:
           ALIAS_NAME="${KEY_ALIAS:-yimmi-kambio}"
 
           if [ ! -f "release.jks" ]; then
-            echo "Generando release.jks temporal para firmar el APK..."
+            echo "Generando release.jks para firmar el APK..."
             keytool -genkeypair -v \
               -keystore release.jks \
               -alias "$ALIAS_NAME" \
@@ -77,11 +77,34 @@ jobs:
 
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=../release.jks \
-            -Pandroid.injected.signing.store.password="$STORE_PASS" \
-            -Pandroid.injected.signing.key.alias="$ALIAS_NAME" \
-            -Pandroid.injected.signing.key.password="$KEY_PASS"
+          ./gradlew assembleRelease --stacktrace
+
+          APK_DIR="app/build/outputs/apk/release"
+          RAW_APK=$(find "$APK_DIR" -name "*.apk" | head -n 1)
+          if [ -z "$RAW_APK" ]; then
+            echo "No se generó ningún APK en $APK_DIR"
+            exit 1
+          fi
+
+          BUILD_TOOLS_DIR=$(find "$ANDROID_SDK_ROOT/build-tools" -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
+          ALIGNED_APK="$APK_DIR/yimmi-kambio-aligned.apk"
+          SIGNED_APK="$APK_DIR/yimmi-kambio-release-signed.apk"
+
+          if [ -n "$BUILD_TOOLS_DIR" ] && [ -x "$BUILD_TOOLS_DIR/zipalign" ]; then
+            "$BUILD_TOOLS_DIR/zipalign" -p -f 4 "$RAW_APK" "$ALIGNED_APK"
+          else
+            cp "$RAW_APK" "$ALIGNED_APK"
+          fi
+
+          if [ -n "$BUILD_TOOLS_DIR" ] && [ -x "$BUILD_TOOLS_DIR/apksigner" ]; then
+            "$BUILD_TOOLS_DIR/apksigner" sign \
+              --ks ../release.jks \
+              --ks-key-alias "$ALIAS_NAME" \
+              --ks-pass "pass:$STORE_PASS" \
+              --key-pass "pass:$KEY_PASS" \
+              --out "$SIGNED_APK" \
+              "$ALIGNED_APK"
+          fi
 
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
