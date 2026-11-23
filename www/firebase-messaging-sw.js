@@ -14,12 +14,16 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-    const title = payload.notification?.title || "Yimmi Kambio";
+    const title = payload?.notification?.title || payload?.data?.title || "Yimmi Kambio";
+    const body = payload?.notification?.body || payload?.data?.body || "Nueva actualización de tasas disponible.";
     const options = {
-        body: payload.notification?.body || "Nueva actualización de tasas disponible.",
+        body,
         icon: "https://i.postimg.cc/t4fJptrQ/BCV-20261120-041842-0000.png",
         badge: "https://i.postimg.cc/t4fJptrQ/BCV-20261120-041842-0000.png",
         tag: "yimmi-kambio-push"
     };
-    self.registration.showNotification(title, options);
+
+    if (self.registration && typeof self.registration.showNotification === "function") {
+        return self.registration.showNotification(title, options);
+    }
 });
