@@ -1,0 +1,8 @@
+{
+  "appId": "com.futuroahora.yimmikambio",
+  "appName": "Yimmi Kambio",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}
